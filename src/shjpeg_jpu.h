@@ -58,7 +58,7 @@ typedef struct {
 
 	int height;
 
-	/* to update VEU_VSAYR/VEU_VSACR */
+	/* to update VEU source addresses */
 	u32 sa_y;
 	u32 sa_c;
 	u32 sa_inc;

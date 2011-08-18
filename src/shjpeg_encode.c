@@ -49,13 +49,12 @@ encode_hw(shjpeg_internal_t * data,
 	int ret = 0;
 	int i;
 	int written = 0;
-	u32 vtrcr = 0;
-	u32 vswpin = 0;
 	bool mode420 = false;
 	shjpeg_jpu_t jpeg;
+	shjpeg_veu_t veu;
 	vmap_data_t mdata;
 
-
+	memset((void*)&veu, 0, sizeof(shjpeg_veu_t));
 	memset(&mdata, 0, sizeof(mdata));
 
 	D_DEBUG_AT(SH7722_JPEG, "( %p, 0x%08lx|%d [%dx%d])",
@@ -64,32 +63,31 @@ encode_hw(shjpeg_internal_t * data,
 	/* Init VEU transformation control (format conversion). */
 	if (format == SHJPEG_PF_NV12)
 		mode420 = true;
-	else
-		vtrcr |= (1 << 22);
 
 	switch (format) {
 	case SHJPEG_PF_NV12:
-		vswpin = 0x66;
+		veu.src.format = REN_NV12;
+		veu.src.pitch = pitch;
 		break;
 
 	case SHJPEG_PF_NV16:
-		vswpin = 0x77;
-		vtrcr |= (1 << 14);
+		veu.src.format = REN_NV16;
+		veu.src.pitch = pitch;
 		break;
 
 	case SHJPEG_PF_RGB16:
-		vswpin = 0x76;
-		vtrcr |= (3 << 8) | 3;
+		veu.src.format = REN_RGB565;
+		veu.src.pitch = pitch / 2;
 		break;
 
 	case SHJPEG_PF_RGB32:
-		vswpin = 0x74;
-		vtrcr |= (0 << 8) | 3;
+		veu.src.format = REN_RGB32;
+		veu.src.pitch = pitch / 4;
 		break;
 
 	case SHJPEG_PF_RGB24:
-		vswpin = 0x77;
-		vtrcr |= (2 << 8) | 3;
+		veu.src.format = REN_RGB24;
+		veu.src.pitch = pitch / 3;
 		break;
 
 	case SHJPEG_PF_YCbCr:
@@ -99,11 +97,6 @@ encode_hw(shjpeg_internal_t * data,
 		D_BUG("unexpected format %d", format);
 		return -1;
 	}
-
-	vtrcr |= (0x1) << 2;
-
-	/* Calculate source base address. */
-	//phys += rect->x + rect->y * pitch;
 
 	D_DEBUG_AT(SH7722_JPEG, "	 -> locking JPU...");
 
@@ -134,8 +127,8 @@ encode_hw(shjpeg_internal_t * data,
 			    JPU_JCMOD_INPUT_CTRL | JPU_JCMOD_DSP_ENCODE |
 			    (mode420 ? 2 : 1));
 
-	shjpeg_jpu_setreg32(data, JPU_JCQTN, 0x14);	//0x14
-	shjpeg_jpu_setreg32(data, JPU_JCHTN, 0x3c);	//0x3c
+	shjpeg_jpu_setreg32(data, JPU_JCQTN, 0x14);
+	shjpeg_jpu_setreg32(data, JPU_JCHTN, 0x3c);
 	shjpeg_jpu_setreg32(data, JPU_JCDRIU, 0x02);
 	shjpeg_jpu_setreg32(data, JPU_JCDRID, 0x00);
 	shjpeg_jpu_setreg32(data, JPU_JCHSZU, width >> 8);
@@ -166,8 +159,6 @@ encode_hw(shjpeg_internal_t * data,
 				    phys + pitch * height);
 		shjpeg_jpu_setreg32(data, JPU_JIFESMW, pitch);
 	} else {
-		shjpeg_veu_t veu;
-
 		jpeg.height = height;
 
 		/* Setup JPU for encoding in line buffer mode. */
@@ -193,6 +184,11 @@ encode_hw(shjpeg_internal_t * data,
 				    SHJPEG_JPU_LINEBUFFER_SIZE_Y);
 		shjpeg_jpu_setreg32(data, JPU_JIFESMW,
 				    SHJPEG_JPU_LINEBUFFER_PITCH);
+		/* configs */
+		jpeg.sa_y = phys;
+		jpeg.sa_c = phys + pitch * height;
+		jpeg.sa_inc = pitch * SHJPEG_JPU_LINEBUFFER_HEIGHT;
+
 		if (format == SHJPEG_PF_YCbCr) {
 			jpeg.flags |= SHJPEG_JPU_FLAG_SOFTCONVERT;
 			jpeg.soft_offset = jpeg.soft_line = 0;
@@ -206,35 +202,28 @@ encode_hw(shjpeg_internal_t * data,
 			jpeg.flags |= SHJPEG_JPU_FLAG_CONVERT;
 			/* Setup VEU for conversion/scaling
 			(from surface to line buffer). */
-			memset((void *) &veu, 0, sizeof(shjpeg_veu_t));
 
 			/* source */
-			veu.src.width = context->width;
-			veu.src.height = SHJPEG_JPU_LINEBUFFER_HEIGHT;
-			veu.src.pitch = pitch;
-			veu.src.yaddr = phys;
-			veu.src.caddr = phys + pitch * height;
+			veu.src.w = context->width;
+			veu.src.h = SHJPEG_JPU_LINEBUFFER_HEIGHT;
 
 			/* destination */
-			veu.dst.width = context->width;
-			veu.dst.height = context->height;
+			veu.dst.format = REN_NV16;
+			veu.dst.w = context->width;
+			veu.dst.h = SHJPEG_JPU_LINEBUFFER_HEIGHT;
 			veu.dst.pitch = SHJPEG_JPU_LINEBUFFER_PITCH;
-			veu.dst.yaddr = data->jpeg_lb1;
-			veu.dst.caddr =
-			    data->jpeg_lb1 + SHJPEG_JPU_LINEBUFFER_SIZE_Y;
 
-			/* transformation parameter */
-			veu.vbssr = 16;
-			veu.vtrcr = vtrcr;
-			veu.vswpr = vswpin;
+			/* Use valid virtual addresses to get through init */
+			veu.src.py = veu.dst.py = data->jpeg_lb1_virt;
+			veu.src.pc = veu.dst.pc = data->jpeg_lb1_virt + SHJPEG_JPU_LINEBUFFER_SIZE_Y;
+			veu.src.pa = veu.dst.pa = NULL;
 
 			/* set VEU */
 			shjpeg_veu_init(data, &veu);
+
+			/* Set the correct physical addresses */
+			shveu_set_src_phys(data->veu, jpeg.sa_y, jpeg.sa_c);
 		}
-		/* configs */
-		jpeg.sa_y = phys;
-		jpeg.sa_c = phys + pitch * height;
-		jpeg.sa_inc = pitch * 16;
 	}
 
 	/* init QT/HT */

@@ -236,58 +236,13 @@ static int
 wait_and_process_veu(shjpeg_context_t * context,
 		shjpeg_internal_t * data)
 {
-	int ret, val;
+	shveu_wait(data->veu);
 
-	struct pollfd fds[] = {
-		{
-		 .fd = data->veu_uio_fd,
-		 .events = POLLIN,
-		 }
-	};
+	D_INFO("libshjpeg: veu: finished LB%d", data->veu_linebuf);
 
-	// wait for IRQ. time out set to 1sec.
-	fds[0].revents = 0;
-	ret = poll(fds, 1, 1000);
-
-	// timeout or some error.
-	if (ret == 0) {
-		D_ERROR ("libshjpeg: veu: Error TIMEOUT");
-		errno = ETIMEDOUT;
-		return -1;
-	}
-
-	if (ret < 0) {
-		D_ERROR("libshjpeg: no IRQ - poll() failed");
-		return -1;
-	}
-
-	/* Handle IRQs */
-	if (fds[0].revents & POLLIN) {
-		D_INFO
-		    ("libshjpeg: VEU IRQ - VEVTR=%08x, VSTAR=%08x, %d lines",
-		     shjpeg_veu_getreg32(data, VEU_VEVTR),
-		     shjpeg_veu_getreg32(data, VEU_VSTAR),
-		     shjpeg_veu_getreg32(data, VEU_VRFSR) >> 16);
-		shjpeg_veu_setreg32(data, VEU_VEVTR, 0);
-
-		/* read number of interrupts */
-		if (read(data->veu_uio_fd, &val, sizeof(val)) != sizeof(val)) {
-			D_ERROR ("libshjpeg: read IRQ count from VEU failed.");
-			return -1;
-		}
-
-		D_INFO("libshjpeg: veu: finished LB%d", data->veu_linebuf);
-		/* point to the other buffer */
-		data->veu_linebuf = (data->veu_linebuf + 1) % 2;
-		data->veu_line_bufs_done++;
-
-		/* re-enable IRQ */
-		val = 1;
-		if (write(data->veu_uio_fd, &val, sizeof(val)) != sizeof(val)) {
-			D_PERROR ("libshjpeg: re-enabling IRQ failed.");
-			return -1;
-		}
-	}
+	/* point to the other buffer */
+	data->veu_linebuf = (data->veu_linebuf + 1) % 2;
+	data->veu_line_bufs_done++;
 
 	return 0;
 }
