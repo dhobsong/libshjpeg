@@ -28,6 +28,7 @@
 #include <sys/mman.h>
 #include <sys/param.h>
 
+#include <uiomux/uiomux.h>
 #include <shjpeg/shjpeg.h>
 #include "shjpeg_internal.h"
 #include "shjpeg_jpu.h"
@@ -82,14 +83,6 @@ uio_open_dev(shjpeg_context_t * context, const char *name, int *uio_num)
 			sscanf(data->uio_dpath[i], "/sys/class/uio/uio%i",
 			       uio_num);
 			found = 1;
-
-			/*
-			 * Set a flag if we have VEU3F.
-			 * XXX: we need to find better place to do this...
-			 */
-			if (!strncmp(data->uio_device[i], "VEU3F", 5))
-				data->uio_caps |= UIO_CAPS_VEU3F;
-
 			break;
 		}
 	}
@@ -207,22 +200,18 @@ static void uio_shutdown(shjpeg_internal_t * data)
 	if (data->jpu_base)
 		munmap((void *) data->jpu_base, data->jpu_size);
 
-	if (data->veu_base)
-		munmap((void *) data->veu_base, data->veu_size);
-
 	if (data->jpeg_virt)
 		munmap((void *) data->jpeg_virt, data->jpeg_size);
 
 	/* close UIO dev */
 	close(data->jpu_uio_fd);
-	close(data->veu_uio_fd);
+
+	shveu_close(data->veu);
 
 	/* deinit */
 	data->jpu_base = NULL;
-	data->veu_base = NULL;
 	data->jpeg_virt = NULL;
 
-	data->veu_uio_fd = 0;
 	data->jpu_uio_fd = 0;
 }
 
@@ -275,27 +264,19 @@ static int uio_init(shjpeg_context_t * context, shjpeg_internal_t * data)
 		return -1;
 	}
 
-	/* Open UIO for VEU. */
-	if ((data->veu_uio_fd = uio_open_dev(context, "VEU",
-					     &data->veu_uio_num)) < 0) {
-		D_ERROR("libshjpeg: Cannot find UIO for VEU!");
+	/* Open VEU */
+	if ((data->veu = shveu_open()) == 0) {
+		D_ERROR("libshjpeg: Cannot open VEU!");
 		return -1;
 	}
 
 	/*
-	 * Get registers and contiguous memory for JPU and VEU.
+	 * Get registers and contiguous memory for JPU.
 	 */
 
 	/* for JPU registers */
 	if (uio_get_maps(context, data->jpu_uio_num, 0, &data->jpu_phys,
 			 &data->jpu_size) < 0) {
-		D_ERROR("libshjpeg: Can't get JPU base address!");
-		goto error;
-	}
-
-	/* for VEU registers */
-	if (uio_get_maps(context, data->veu_uio_num, 0, &data->veu_phys,
-			 &data->veu_size) < 0) {
 		D_ERROR("libshjpeg: Can't get JPU base address!");
 		goto error;
 	}
@@ -311,8 +292,6 @@ static int uio_init(shjpeg_context_t * context, shjpeg_internal_t * data)
 		"jpeg_phys=%08lx(%08lx)",
 		data->jpu_uio_num, data->jpu_phys, data->jpu_size,
 		data->jpeg_phys, data->jpeg_size);
-	D_INFO("libshjpeg: uio#=%d, veu_phys=%08lx(%08lx)",
-		data->veu_uio_num, data->veu_phys, data->veu_size);
 
 	/* Map JPU registers and memory. */
 	data->jpu_base = mmap(NULL, data->jpu_size,
@@ -335,14 +314,8 @@ static int uio_init(shjpeg_context_t * context, shjpeg_internal_t * data)
 		goto error;
 	}
 
-	/* Map VEU registers. */
-	data->veu_base = mmap(NULL, data->veu_size,
-			      PROT_READ | PROT_WRITE,
-			      MAP_SHARED, data->veu_uio_fd, 0);
-	if (data->veu_base == MAP_FAILED) {
-		D_PERROR("libshjpeg: Could not map VEU MMIO!");
-		goto error;
-	}
+	/* Register the memory with UIOMux */
+	uiomux_register (data->jpeg_virt, data->jpeg_phys, data->jpeg_size);
 
 	/* initialize buffer base address */
 	// line buffer 1
@@ -364,14 +337,13 @@ static int uio_init(shjpeg_context_t * context, shjpeg_internal_t * data)
 	 */
 	if (uio_clear_irq(context, data->jpu_uio_fd, "JPU") < 0)
 		goto error;
-	if (uio_clear_irq(context, data->veu_uio_fd, "VEU") < 0)
-		goto error;
 
 	return 0;
 
       error:
 	/* unmap memory in the case of error */
 	uio_shutdown(data);
+	uiomux_unregister (data->jpeg_virt);
 
 	return -1;
 }
@@ -385,7 +357,6 @@ static shjpeg_internal_t data = {
 	.uio_count = 0,
 	.uio_device = NULL,
 	.uio_dpath = NULL,
-	.uio_caps = 0,
 };
 
 /*
@@ -447,6 +418,7 @@ void shjpeg_shutdown(shjpeg_context_t * context)
 
 	/* shutdown uio */
 	uio_shutdown(&data);
+	uiomux_unregister (data.jpeg_virt);
 
       quit:
 	return;

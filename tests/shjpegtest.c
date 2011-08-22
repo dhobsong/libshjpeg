@@ -93,6 +93,11 @@ void write_bmp(const char *filename, int bpp,
     FILE *file;
     char *buffer = NULL, tmp;
 
+    if (bpp < 16) {
+        printf("Warning: Can't write bmp for this format!\n");
+        return;
+    }
+
     /* mamp memory */
     mem = map_image(phys, pitch, height, &size);
     if (mem == MAP_FAILED) {
@@ -313,7 +318,7 @@ main(int argc, char *argv[])
     char		  *dumpfn2 = "test.bmp";
     int			   verbose = 0;
     int			   dump = 0;
-    int			   bpp = 24;
+    int			   bpp = -1;
     int			   disable_libjpeg = 0;
     int			   quiet = 0;
     int			   error = 0;
@@ -435,7 +440,6 @@ main(int argc, char *argv[])
 	       (context->mode420) ? "2:0" : 
 	       ((context->mode444) ? "4:4" : "2:2?"));
 
-    if (dump) {
 	/* When PPM is requested, bpp must be 24 */
 	if (dump == 1)
 	    bpp = 24;
@@ -450,13 +454,12 @@ main(int argc, char *argv[])
 	case 16:
 	    format = SHJPEG_PF_RGB16;
 	    break;
+	case 0:
+	    format = SHJPEG_PF_YCbCr;
+	    break;
 	default:
-	    fprintf(stderr, "unsupported bpp (%d)\n", bpp);
-	    return 1;
+	    format = !context->mode420 ? SHJPEG_PF_NV16 : SHJPEG_PF_NV12;
 	}
-    } else {
-	format = !context->mode420 ? SHJPEG_PF_NV16 : SHJPEG_PF_NV12;
-    }
     pitch  = (SHJPEG_PF_PITCH_MULTIPLY(format) * context->width + 7) & ~7;
 
     /* start decoding */

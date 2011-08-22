@@ -20,36 +20,6 @@
 #define __shjpu_regs_h__
 
 /*
- * VEU Registers
- */
-
-#define VEU_VESTR	0x0000
-#define VEU_VESWR	0x0010
-#define VEU_VESSR	0x0014
-#define VEU_VSAYR	0x0018
-#define VEU_VSACR	0x001c
-#define VEU_VBSSR	0x0020
-#define VEU_VEDWR	0x0030
-#define VEU_VDAYR	0x0034
-#define VEU_VDACR	0x0038
-#define VEU_VTRCR	0x0050
-#define VEU_VRFCR	0x0054
-#define VEU_VRFSR	0x0058
-#define VEU_VENHR	0x005c
-#define VEU_VFMCR	0x0070
-#define VEU_VVTCR	0x0074
-#define VEU_VHTCR	0x0078
-#define VEU_VAPCR	0x0080
-#define VEU_VECCR	0x0084
-#define VEU_VAFXR	0x0090
-#define VEU_VSWPR	0x0094
-#define VEU_VEIER	0x00a0
-#define VEU_VEVTR	0x00a4
-#define VEU_VSTAR	0x00b0
-#define VEU_VBSRR	0x00b4
-#define VEU_VRPBR	0x00c8	/* added in VEU3F - SH7724 */
-
-/*
  * JPU Registers
  */
 
@@ -174,6 +144,5 @@
  */
 
 extern const char *jpu_reg_str[];
-extern const char *veu_reg_str[];
 
 #endif				/* !__shjpu_regs_h__ */

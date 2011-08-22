@@ -6,11 +6,11 @@ AM_CPPFLAGS = $(INCLTDL) -I$(top_srcdir)/include
 if MAKE_JPEG_WRAPPER
 AM_CPPFLAGS +=	-I$(libjpeg_inc_path)
 endif
-AM_CFLAGS = -Wall -Werror
+AM_CFLAGS = -Wall -Werror $(UIOMUX_CFLAGS) $(SHVEU_CFLAGS)
 
 lib_LTLIBRARIES = libshjpeg.la
 
-libshjpeg_la_LIBADD = $(LIBS)
+libshjpeg_la_LIBADD = $(LIBS) $(UIOMUX_LIBS) $(SHVEU_LIBS)
 
 libshjpeg_la_LDFLAGS = -version-info $(LIBSHJPEG_VERSION_INFO)
 
