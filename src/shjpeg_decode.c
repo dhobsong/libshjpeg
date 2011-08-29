@@ -48,45 +48,41 @@ decode_hw(shjpeg_internal_t * data,
 	unsigned int len;
 	bool reload = false;
 	shjpeg_jpu_t jpeg;
-	u32 vtrcr = 0;
-	u32 vswpout = 0;
-
+	shjpeg_veu_t veu;
 	vmap_data_t mdata;
 	D_ASSERT(data != NULL);
 
+	memset((void*)&veu, 0, sizeof(shjpeg_veu_t));
 	memset(&mdata, 0, sizeof(mdata));
 
 	D_DEBUG_AT(SH7722_JPEG, "%s( %p, 0x%08lx|%d [%dx%d] %08x )",
 		   __FUNCTION__, data, phys, pitch,
 		   context->width, context->height, format);
 
-	/* Init VEU transformation control (format conversion). */
-	if (!context->mode420)
-		vtrcr |= (1 << 14);
-
 	switch (format) {
 	case SHJPEG_PF_NV12:
-		vswpout = 0x70;
+		veu.dst.format = REN_NV12;
+		veu.dst.pitch = pitch;
 		break;
 
 	case SHJPEG_PF_NV16:
-		vswpout = 0x70;
-		vtrcr |= (1 << 22);
+		veu.dst.format = REN_NV16;
+		veu.dst.pitch = pitch;
 		break;
 
 	case SHJPEG_PF_RGB16:
-		vswpout = 0x60;
-		vtrcr |= (6 << 16) | 2;
+		veu.dst.format = REN_RGB565;
+		veu.dst.pitch = pitch / 2;
 		break;
 
 	case SHJPEG_PF_RGB32:
-		vswpout = 0x40;
-		vtrcr |= (19 << 16) | 2;
+		veu.dst.format = REN_RGB32;
+		veu.dst.pitch = pitch / 4;
 		break;
 
 	case SHJPEG_PF_RGB24:
-		vswpout = 0x70;
-		vtrcr |= (21 << 16) | 2;
+		veu.dst.format = REN_RGB24;
+		veu.dst.pitch = pitch / 3;
 		break;
 
 	case SHJPEG_PF_YCbCr:
@@ -96,11 +92,6 @@ decode_hw(shjpeg_internal_t * data,
 		D_BUG("unexpected format %08x", format);
 		return -1;
 	}
-
-	vtrcr |= (0x1 << 2);
-
-	/* Calculate destination base address. */
-	// phys += rect->x + rect->y * pitch;
 
 	D_DEBUG_AT(SH7722_JPEG, "		 -> locking JPU...");
 
@@ -166,6 +157,7 @@ decode_hw(shjpeg_internal_t * data,
 		shjpeg_jpu_setreg32(data, JPU_JINTE,
 				    JPU_JINTS_INS5_ERROR |
 				    JPU_JINTS_INS6_DONE |
+				    JPU_JINTS_INS10_XFER_DONE |
 				    (reload ?  JPU_JINTS_INS14_RELOAD : 0));
 		shjpeg_jpu_setreg32(data, JPU_JIFDCNT,
 				    JPU_JIFDCNT_SWAP_4321 |
@@ -175,12 +167,11 @@ decode_hw(shjpeg_internal_t * data,
 				    phys + pitch * height);
 		shjpeg_jpu_setreg32(data, JPU_JIFDDMW, pitch);
 	} else {
-		shjpeg_veu_t veu;
-
 		/* Setup JPU for decoding in line buffer mode. */
 		shjpeg_jpu_setreg32(data, JPU_JINTE,
 				    JPU_JINTS_INS5_ERROR |
 				    JPU_JINTS_INS6_DONE |
+				    JPU_JINTS_INS10_XFER_DONE |
 				    JPU_JINTS_INS11_LINEBUF0 |
 				    JPU_JINTS_INS12_LINEBUF1 |
 				    (reload ?  JPU_JINTS_INS14_RELOAD : 0));
@@ -215,26 +206,30 @@ decode_hw(shjpeg_internal_t * data,
 			jpeg.flags |= SHJPEG_JPU_FLAG_CONVERT;
 			/* Setup VEU for conversion/scaling
 				(from line buffer to surface). */
-			memset((void*)&veu, 0, sizeof(shjpeg_veu_t));
 			/* source */
-			veu.src.width   = context->width;
-			veu.src.height  = context->height;
-			veu.src.pitch   = SHJPEG_JPU_LINEBUFFER_PITCH;
+			if (context->mode420)
+				veu.src.format = REN_NV12;
+			else
+				veu.src.format = REN_NV16;
+			veu.src.w = context->width;
+			veu.src.h = context->height;
+			veu.src.pitch = SHJPEG_JPU_LINEBUFFER_PITCH;
 
 			/* destination */
-			veu.dst.width   = context->width;
-			veu.dst.height  = context->height;
-			veu.dst.pitch   = pitch;
-			veu.dst.yaddr   = phys;
-			veu.dst.caddr   = phys + pitch * height;
+			veu.dst.w = width;
+			veu.dst.h = height;
 
-			/* transformation parameter */
-			veu.vbssr   = SHJPEG_JPU_LINEBUFFER_HEIGHT;
-			veu.vtrcr   = vtrcr;
-			veu.vswpr   = vswpout | 7;
+			/* Use valid virtual addresses to get through init */
+			veu.src.py = veu.dst.py = data->jpeg_lb1_virt;
+			veu.src.pc = veu.dst.pc = data->jpeg_lb1_virt;
+			veu.src.pa = veu.dst.pa = NULL;
 
 			/* set VEU */
 			shjpeg_veu_init(data, &veu);
+
+			/* Set the correct physical addresses */
+			shveu_set_src_phys(data->veu, 0, 0);
+			shveu_set_dst_phys(data->veu, phys, phys + pitch * height);
 		}
 	}
 
