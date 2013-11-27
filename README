@@ -1,14 +1,16 @@
-The hardware accelerated JPEG encoder/decoder library for SH Mobile.
-This makes use of Renesas's SH7722/4 SoC's JPU.  If JPEG files
-cannot be decoded, automatically falls back to libjpeg.
+The hardware accelerated JPEG encoder/decoder library for Renesas
+SH-Mobile and R-Mobile/R-Car SoCs.
+This makes use of the Renesas SoC's JPU.  If JPEG files cannot be
+decoded, automatically falls back to libjpeg.
 
 Run 'autoreconf -vif' to create 'configure'.
 
-Then, run ./configure. You must have libjpeg, libuiomux, and libshveu,
-in order to compile properly.
+Then, run ./configure. You must have libjpeg, libuiomux in order to
+compile properly. And also you should have libshvio if you want
+the RGB color space support for decoder output and encoder input.
 
-libuiomux can be found at: https://github.com/pedwo/libuiomux
-libshveu can be found at: https://github.com/pedwo/libshveu
+libuiomux can be found at: https://github.com/renesas-devel/libuiomux
+libshvio can be found at: https://github.com/renesas-devel/libshvio
 
 You can find 4 sample codes in ./tests/ directory. Possible options
 on these sample codes can be found by giving '--help' as a command

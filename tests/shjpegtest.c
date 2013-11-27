@@ -28,9 +28,6 @@
 
 #include <shjpeg/shjpeg.h>
 
-/* for /dev/mem */
-static int memfd = -1;
-
 /* for BMP bitmap */
 
 typedef struct {
@@ -62,34 +59,12 @@ typedef struct {
     uint32_t	gamma_blue;
 } bmp_header_t;
 
-void *map_image(unsigned long phys, int pitch, int height, int *size)
-{
-    int	page_sz = getpagesize() - 1;
-
-    *size = ((pitch * height) + page_sz) & ~page_sz;
-
-    if (memfd < 0) {
-	if ((memfd = open("/dev/mem", O_RDWR)) < 0) {
-	    perror("map_image(): opening /dev/mem -");
-	    return MAP_FAILED;
-	}
-    }
-
-    // map
-    return mmap(NULL, *size, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, phys);
-}
-
-void munmap_image(void *mem, int *size)
-{
-    munmap(mem, *size);
-}
-
 void write_bmp(const char *filename, int bpp,
-	       unsigned long phys, int pitch, int width, int height)
+	       void *mem, int pitch, int width, int height)
 {
     bmp_header_t bmp_header;
-    int h, w, bw, size, raw_size, stride;
-    void *mem, *ptr;
+    int h, w, bw, raw_size, stride;
+    void *ptr;
     FILE *file;
     char *buffer = NULL, tmp;
 
@@ -98,18 +73,10 @@ void write_bmp(const char *filename, int bpp,
         return;
     }
 
-    /* mamp memory */
-    mem = map_image(phys, pitch, height, &size);
-    if (mem == MAP_FAILED) {
-	perror("write_bmp(): mmaping /dev/mem -");
-	return;
-    }
-
     /* Open BMP file to write */
     file = fopen(filename, "wb");
     if (!file) {
 	perror("write_bmp(): opening file to write - ");
-	munmap_image(mem, &size);
 	return;
     }
     
@@ -182,34 +149,22 @@ void write_bmp(const char *filename, int bpp,
 
     if (bpp == 24)
 	free(buffer);
-
-    /* unmap memory */
-    munmap_image(mem, &size);
 }
 
 void
-write_ppm(const char    *filename,
-	  unsigned long  phys,
-	  int            pitch,
-	  unsigned int   width,
+write_ppm(const char	*filename,
+	  void		*mem,
+	  int		 pitch,
+	  unsigned int	 width,
 	  unsigned int   height)
 {
-    int i, size;
-    void *mem;
+    int i;
     FILE *file;
-
-    /* mamp memory */
-    mem = map_image(phys, pitch, height, &size);
-    if (mem == MAP_FAILED) {
-	perror("write_ppm(): mmaping /dev/mem -");
-	return;
-    }
 
     /* Open PPM file to write */
     file = fopen(filename, "wb");
     if (!file) {
 	perror("write_ppm(): opening file to write - ");
-	munmap_image(mem, &size);
 	return;
     }
 
@@ -224,9 +179,6 @@ write_ppm(const char    *filename,
 
     /* done */
     fclose(file);
-
-    /* unmap memory */
-    munmap_image(mem, &size);
 }
 
 
@@ -306,7 +258,6 @@ main(int argc, char *argv[])
 {
     int                    pitch;
     void                  *jpeg_virt;
-    unsigned long          jpeg_phys;
     unsigned long	   phys = SHJPEG_USE_DEFAULT_BUFFER;
     size_t                 jpeg_size;
     shjpeg_context_t	  *context;
@@ -460,10 +411,14 @@ main(int argc, char *argv[])
 	default:
 	    format = !context->mode420 ? SHJPEG_PF_NV16 : SHJPEG_PF_NV12;
 	}
-    pitch  = (SHJPEG_PF_PITCH_MULTIPLY(format) * context->width + 7) & ~7;
+    pitch  = SHJPEG_PF_PITCH_MULTIPLY(format) * context->width;
+
+    /* allocate memory for output buffer */
+    jpeg_virt = shjpeg_malloc(context, format, context->width,
+			      context->height, pitch, &jpeg_size);
 
     /* start decoding */
-    if (shjpeg_decode_run(context, format, phys,
+    if (shjpeg_decode_run(context, format, jpeg_virt,
 			  context->width, context->height, pitch) < 0) {
 	fprintf(stderr, "shjpeg_deocde_run() failed\n");
 	error = 1;
@@ -477,26 +432,15 @@ main(int argc, char *argv[])
     /* shutdown decoder */
     shjpeg_decode_shutdown(context);
 
-    /* get framebuffer information */
-    if (phys == SHJPEG_USE_DEFAULT_BUFFER) {
-	shjpeg_get_frame_buffer(context, &jpeg_phys, &jpeg_virt, &jpeg_size);
-	if (!quiet) {
-	    printf("jpu uio: JPEG Buffer - 0x%08lx(%p) - size = %08x\n",
-		   jpeg_phys, jpeg_virt, jpeg_size );
-	}
-    } else {
-   	jpeg_phys = phys; 
-    }
-
     /* dump intermediate file */
     switch(dump) {
     case 2:
-	write_bmp(dumpfn2, bpp, jpeg_phys, pitch, 
+	write_bmp(dumpfn2, bpp, jpeg_virt, pitch,
 		  context->width, context->height);
 	break;
 
     case 1:
-	write_ppm(dumpfn, jpeg_phys, pitch, context->width, context->height);
+	write_ppm(dumpfn, jpeg_virt, pitch, context->width, context->height);
     }
 
     close(fd);
@@ -513,12 +457,14 @@ main(int argc, char *argv[])
     }
 
     /* start encoding */
-    if (shjpeg_encode(context, format, jpeg_phys, 
+    if (shjpeg_encode(context, format, jpeg_virt,
 		      context->width, context->height, pitch) < 0) {
 	fprintf(stderr, "%s: shjpeg_encode() failed.\n", argv[0]);
 	return 1;
     }
     close(fd);
+
+    shjpeg_free(context, jpeg_virt, jpeg_size);
 
     shjpeg_shutdown(context);
 

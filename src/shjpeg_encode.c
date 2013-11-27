@@ -16,6 +16,9 @@
  * MIT license: COPYING_MIT
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -30,7 +33,9 @@
 #include <shjpeg/shjpeg.h>
 #include "shjpeg_internal.h"
 #include "shjpeg_jpu.h"
-#include "shjpeg_veu.h"
+#if defined(HAVE_SHVIO)
+#include "shjpeg_vio.h"
+#endif
 #include "shjpeg_softhelper.h"
 
 static inline int coded_data_amount(shjpeg_internal_t * data)
@@ -51,52 +56,12 @@ encode_hw(shjpeg_internal_t * data,
 	int written = 0;
 	bool mode420 = false;
 	shjpeg_jpu_t jpeg;
-	shjpeg_veu_t veu;
 	vmap_data_t mdata;
-
-	memset((void*)&veu, 0, sizeof(shjpeg_veu_t));
-	memset(&mdata, 0, sizeof(mdata));
 
 	D_DEBUG_AT(SH7722_JPEG, "( %p, 0x%08lx|%d [%dx%d])",
 		   data, phys, pitch, width, height);
 
-	/* Init VEU transformation control (format conversion). */
-	if (format == SHJPEG_PF_NV12)
-		mode420 = true;
-
-	switch (format) {
-	case SHJPEG_PF_NV12:
-		veu.src.format = REN_NV12;
-		veu.src.pitch = pitch;
-		break;
-
-	case SHJPEG_PF_NV16:
-		veu.src.format = REN_NV16;
-		veu.src.pitch = pitch;
-		break;
-
-	case SHJPEG_PF_RGB16:
-		veu.src.format = REN_RGB565;
-		veu.src.pitch = pitch / 2;
-		break;
-
-	case SHJPEG_PF_RGB32:
-		veu.src.format = REN_RGB32;
-		veu.src.pitch = pitch / 4;
-		break;
-
-	case SHJPEG_PF_RGB24:
-		veu.src.format = REN_RGB24;
-		veu.src.pitch = pitch / 3;
-		break;
-
-	case SHJPEG_PF_YCbCr:
-		break;
-
-	default:
-		D_BUG("unexpected format %d", format);
-		return -1;
-	}
+	memset(&mdata, 0, sizeof(mdata));
 
 	D_DEBUG_AT(SH7722_JPEG, "	 -> locking JPU...");
 
@@ -141,8 +106,10 @@ encode_hw(shjpeg_internal_t * data,
 	shjpeg_jpu_setreg32(data, JPU_JIFEDA2,
 			    data->jpeg_phys + SHJPEG_JPU_RELOAD_SIZE);
 	shjpeg_jpu_setreg32(data, JPU_JIFEDRSZ, SHJPEG_JPU_RELOAD_SIZE);
-	shjpeg_jpu_setreg32(data, JPU_JIFESHSZ, width);
-	shjpeg_jpu_setreg32(data, JPU_JIFESVSZ, height);
+	shjpeg_jpu_setreg32(data, JPU_JIFESHSZ,
+			    ((u32)width + 3) & 0x00000ffc);
+	shjpeg_jpu_setreg32(data, JPU_JIFESVSZ,
+			    ((u32)height + 3) & 0x00000ffc);
 
 	if (format == SHJPEG_PF_NV12 || format == SHJPEG_PF_NV16) {
 		/* Setup JPU for encoding in frame mode (directly from surface). */
@@ -157,7 +124,8 @@ encode_hw(shjpeg_internal_t * data,
 		shjpeg_jpu_setreg32(data, JPU_JIFESYA1, phys);
 		shjpeg_jpu_setreg32(data, JPU_JIFESCA1,
 				    phys + pitch * height);
-		shjpeg_jpu_setreg32(data, JPU_JIFESMW, pitch);
+		shjpeg_jpu_setreg32(data, JPU_JIFESMW,
+				    ((u32)pitch + 7) & 0x0ff8);
 	} else {
 		jpeg.height = height;
 
@@ -198,32 +166,17 @@ encode_hw(shjpeg_internal_t * data,
 					&mdata, format, phys) < 0) {
 				return -1;
 			}
-		} else {
-			jpeg.flags |= SHJPEG_JPU_FLAG_CONVERT;
-			/* Setup VEU for conversion/scaling
-			(from surface to line buffer). */
 
-			/* source */
-			veu.src.w = context->width;
-			veu.src.h = SHJPEG_JPU_LINEBUFFER_HEIGHT;
-
-			/* destination */
-			veu.dst.format = REN_NV16;
-			veu.dst.w = context->width;
-			veu.dst.h = SHJPEG_JPU_LINEBUFFER_HEIGHT;
-			veu.dst.pitch = SHJPEG_JPU_LINEBUFFER_PITCH;
-
-			/* Use valid virtual addresses to get through init */
-			veu.src.py = veu.dst.py = data->jpeg_lb1_virt;
-			veu.src.pc = veu.dst.pc = data->jpeg_lb1_virt + SHJPEG_JPU_LINEBUFFER_SIZE_Y;
-			veu.src.pa = veu.dst.pa = NULL;
-
-			/* set VEU */
-			shjpeg_veu_init(data, &veu);
-
-			/* Set the correct physical addresses */
-			shveu_set_src_phys(data->veu, jpeg.sa_y, jpeg.sa_c);
 		}
+#if defined(HAVE_SHVIO)
+		else {
+			jpeg.flags |= SHJPEG_JPU_FLAG_CONVERT;
+			/* save some attibutes of input image
+			   to set up the vio hardware later */
+			context->pitch = pitch;
+			context->format = format;
+		}
+#endif /* defined(HAVE_SHVIO) */
 	}
 
 	/* init QT/HT */
@@ -301,9 +254,10 @@ encode_hw(shjpeg_internal_t * data,
 int
 shjpeg_encode(shjpeg_context_t * context,
 	      shjpeg_pixelformat format,
-	      unsigned long phys, int width, int height, int pitch)
+	      void *virt, int width, int height, int pitch)
 {
 	shjpeg_internal_t *data;
+	unsigned long phys;
 
 	if (!context) {
 		D_ERROR("libjpeg: invalid context passed.");
@@ -318,9 +272,13 @@ shjpeg_encode(shjpeg_context_t * context,
 		return -1;
 	}
 
-	/* if physical address is not given, use the default */
-	if (phys == SHJPEG_USE_DEFAULT_BUFFER)
-		phys = data->jpeg_data;
+	/* error if physical address is not given */
+	if (!virt) {
+		D_ERROR("libshjpeg: buffer address is not given.");
+		return -1;
+	}
+
+	phys = uiomux_virt_to_phys(data->uiomux, UIOMUX_JPU, virt);
 
 	switch (format) {
 	case SHJPEG_PF_NV12:

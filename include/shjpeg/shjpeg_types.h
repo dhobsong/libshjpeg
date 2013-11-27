@@ -217,6 +217,8 @@ struct shjpeg_context_struct {
 //New for 1.3
     //! Pitch of the current image.
     int         pitch;
+    //! Format of the input image for encoding
+    shjpeg_pixelformat   format;
     //! the working buffer for JPEG encode/decode (deprecated, see shjpeg_buffer)
     struct shjpeg_buffer buffer;
 };

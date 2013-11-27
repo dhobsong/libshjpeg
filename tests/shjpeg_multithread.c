@@ -26,7 +26,6 @@
 #include <getopt.h>
 #include <sys/mman.h>
 #include <linux/fb.h>
-#include <uiomux/uiomux.h>
 #include <sys/ioctl.h>
 #include <pthread.h>
 
@@ -34,9 +33,6 @@
 
 struct fb_fix_screeninfo fb_info;
 struct fb_var_screeninfo fb_vinfo;
-static UIOMux		*uiomux;
-static const char	*uio_name[2] = {"JPU", NULL};
-#define UIOMUX_JPU	(1 << 0)
 
 #define IMG_WIDTH	320
 #define IMG_HEIGHT	240
@@ -146,10 +142,9 @@ void fill_pattern(char *buffer, int width, int height, int index,
 }
 
 int decode_jpeg(char *buffer, int pattern, int cnt) {
-	int bufsize = IMG_WIDTH * IMG_HEIGHT * IMG_BPP;
+	size_t bufsize;
 	shjpeg_context_t *context;
 	int format, pitch;
-	unsigned long encode_phys, decode_phys;
 	char *jpeg_buf;
 	void *encode_buffer;
 	void *decode_result;
@@ -161,15 +156,22 @@ int decode_jpeg(char *buffer, int pattern, int cnt) {
 		return 1;
 	}
 
-	encode_buffer = uiomux_malloc(uiomux, UIOMUX_JPU, bufsize, 1);
-	decode_result = uiomux_malloc(uiomux, UIOMUX_JPU, bufsize, 1);
+	context->width = IMG_WIDTH;
+	context->height = IMG_HEIGHT;
+	format = SHJPEG_PF_RGB16;
+	pitch  = (SHJPEG_PF_PITCH_MULTIPLY(format) * context->width + 7) & ~7;
 
-	jpeg_buf = malloc(bufsize);
+	encode_buffer = shjpeg_malloc(context, format, context->width,
+				      context->height, pitch, &bufsize);
+	decode_result = shjpeg_malloc(context, format, context->width,
+				      context->height, pitch, &bufsize);
 
 	if (!encode_buffer || !decode_result) {
 		fprintf(stderr, "Out of UIO memory\n");
 		return 1;
 	}
+
+	jpeg_buf = malloc(bufsize);
 
 	jbuf.ptr = jpeg_buf;
 	/* set callbacks to context */
@@ -177,22 +179,13 @@ int decode_jpeg(char *buffer, int pattern, int cnt) {
 	context->priv_data = (void*)&jbuf;
 	context->libjpeg_disabled = 0;
 
-
-	context->width = IMG_WIDTH;
-	context->height = IMG_HEIGHT;
-	format = SHJPEG_PF_RGB16;
-	pitch  = (SHJPEG_PF_PITCH_MULTIPLY(format) * context->width + 7) & ~7;
-
-	encode_phys = uiomux_virt_to_phys(uiomux, UIOMUX_JPU, encode_buffer);
-	decode_phys = uiomux_virt_to_phys(uiomux, UIOMUX_JPU, decode_result);
-
 	memset(encode_buffer, 0, bufsize);
 
 	for (i = 0; i < cnt || cnt < 0; i++) {
 		/* start of frame */
 			fill_pattern(encode_buffer, context->width,
 				context->height, i, pattern);
-		if (shjpeg_encode(context, format, encode_phys,
+		if (shjpeg_encode(context, format, encode_buffer,
 			      context->width, context->height, pitch) < 0) {
 			fprintf(stderr, "shjpeg_encode() failed.\n");
 			return 1;
@@ -205,7 +198,7 @@ int decode_jpeg(char *buffer, int pattern, int cnt) {
 		}
 
 		/* start decoding */
-		if (shjpeg_decode_run(context, format, decode_phys,
+		if (shjpeg_decode_run(context, format, decode_result,
 				context->width, context->height, pitch) < 0) {
 			fprintf(stderr, "shjpeg_deocde_run() failed\n");
 		}
@@ -218,8 +211,8 @@ int decode_jpeg(char *buffer, int pattern, int cnt) {
 	}
 	shjpeg_shutdown(context);
 	free(jpeg_buf);
-	uiomux_free(uiomux, UIOMUX_JPU, encode_buffer, bufsize);
-	uiomux_free(uiomux, UIOMUX_JPU, decode_result, bufsize);
+	shjpeg_free(context, encode_buffer, bufsize);
+	shjpeg_free(context, decode_result, bufsize);
 	return 0;
 }
 
@@ -304,11 +297,6 @@ main(int argc, char *argv[])
 
     setup_framebuffer("/dev/fb0", &fb_fd, &fb_buffer);
 
-    uiomux = uiomux_open_named(uio_name);
-    if (!uiomux) {
-	fprintf(stderr, "Cannot open JPU UIO device\n");
-	return 1;
-    }
     decode_inst1.fb_buffer = fb_buffer;
     decode_inst1.pattern = 0;
     decode_inst1.count = count;

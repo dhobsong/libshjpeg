@@ -19,7 +19,10 @@
 #ifndef __shjpeg_internal_h__
 #define __shjpeg_internal_h__
 
-#include <shveu/shveu.h>
+#include <pthread.h>
+#if defined(HAVE_SHVIO)
+#include <shvio/shvio.h>
+#endif
 #include <shjpeg/shjpeg_types.h>
 #include "shjpeg_utils.h"
 #include <uiomux/uiomux.h>
@@ -50,14 +53,14 @@ typedef struct {
 	unsigned long jpeg_lb1;	// phys addr of line buffer 1
 	unsigned long jpeg_lb2;	// phys addr of line buffer 2
 
-	unsigned long jpeg_data;	// phys addr of jpeg data
-
 	// XXX: mmio_* -> jpu_*
 	unsigned long jpu_phys;	// phys addr of JPU regs
 	volatile void *jpu_base;	// virt addr to JPU regs
 	unsigned long jpu_size;	// size of JPU reg range
 
-	SHVEU *veu;
+#if defined(HAVE_SHVIO)
+	SHVIO *vio;
+#endif
 
 	/* internal to state machine */
 	uint32_t jpeg_buffers;
@@ -70,8 +73,8 @@ typedef struct {
 	int jpu_line_bufs_pending;
 	int jpu_line_bufs_done;
 
-	int veu_linebuf;
-	int veu_line_bufs_done;
+	int vio_linebuf;
+	int vio_line_bufs_done;
 
 	/* internal data */
 	shjpeg_context_t *context;

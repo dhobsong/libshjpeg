@@ -74,6 +74,56 @@ shjpeg_context_t *shjpeg_init(int verbose);
 void shjpeg_shutdown(shjpeg_context_t *context);
 
 /**
+ * \brief Allocate memory for output buffer.
+ *
+ * Allocate memory. This could be called only after
+ * shjpeg_decode_init() is called.
+ *
+ * \param context [in] a pointer to the JPEG image context to be
+ *        decoded. Pass the value set by shjpeg_open().
+ *
+ * \param format [in] desired pixelformat of the decoded image.
+ *
+ * \param width [in] width of the destination frame buffer.
+ *
+ * \param height [in] height of the destination frame buffer.
+ *
+ * \param pitch [in] pitch of the frame buffer.
+ *
+ * \retval 0 success
+ * \retval -1 failed
+ *
+ * \sa shjpeg_decode_init().
+ */
+void *shjpeg_malloc(shjpeg_context_t	*context,
+		    shjpeg_pixelformat	 format,
+		    int			 width,
+		    int			 height,
+		    int			 pitch,
+		    size_t		*allocated_size);
+
+/**
+ * \brief Release memory of output buffer.
+ *
+ * Release memory of specified buffer.
+ *
+ * \param context [in] a pointer to the JPEG image context to be
+ *        decoded. Pass the value set by shjpeg_open().
+ *
+ * \param address [in] address of the buffer.
+ *
+ * \param size [in] size of the buffer.
+ *
+ * \retval 0 success
+ * \retval -1 failed
+ *
+ * \sa shjpeg_decode_init().
+ */
+void shjpeg_free(shjpeg_context_t	*context,
+		 void			*address,
+		 size_t			 size);
+
+/**
  * \brief Get frame buffer information.
  *
  * Kernel allocated contiguous memory that could be used to place
@@ -87,8 +137,6 @@ void shjpeg_shutdown(shjpeg_context_t *context);
  * \param context [in] a pointer to the JPEG image context.
  *        Pass the value set by shjpeg_open().
  *
- * \param phys start address of physical contiguous memory is set.
- *
  * \param buffer pointer to the memory mapped physical contiguous
  *	 memory is set.
  *
@@ -101,7 +149,6 @@ void shjpeg_shutdown(shjpeg_context_t *context);
  */
 
 int shjpeg_get_frame_buffer(shjpeg_context_t	 *context,
-			    unsigned long	 *phys,
 			    void		**buffer,
 			    size_t		 *size );
 
@@ -133,12 +180,9 @@ int shjpeg_decode_init(shjpeg_context_t *context);
  * \param context [in] a pointer to the JPEG image context to be
  *        decoded. Pass the value set by shjpeg_open().
  *
- * \param format [in] desired pixelformat of the decoded image.  
+ * \param format [in] desired pixelformat of the decoded image.
  *
- * \param phys [in] physical memory address for decoded image. If the value
- *       is set to SHJPEG_USE_DEFAULT_BUFFER, then memory allocated by the
- *       kernel will be automatically used. The kernel allocated memory can be
- *       obtained using shjpeg_get_frame_buffer().
+ * \param virt [in] virttual memory address for decoded image.
  *
  * \param width [in] width of the destination frame buffer.
  *
@@ -153,7 +197,7 @@ int shjpeg_decode_init(shjpeg_context_t *context);
  */
 int shjpeg_decode_run(shjpeg_context_t		*context,
 		      shjpeg_pixelformat	 format,
-		      unsigned long          	 phys,
+		      void          	        *virt,
 		      int			 width,
 		      int			 height,
 		      int                    	 pitch);
@@ -185,10 +229,7 @@ void shjpeg_decode_shutdown(shjpeg_context_t *context);
  * \param format pixelformat of the image. Only NV12 and NV16 are
  *	  supported.
  *
- * \param phys physical memory address for input image. If the value
- *       is set to SHJPEG_USE_DEFAULT_BUFFER, then memory allocated by the
- *       kernel will be automatically used. The kernel allocated memory can be
- *       obtained using shjpeg_get_frame_buffer().
+ * \param virt virtual memory address for input image.
  *
  * \param width width of the input image. 
  *
@@ -203,10 +244,10 @@ void shjpeg_decode_shutdown(shjpeg_context_t *context);
  */
 int shjpeg_encode(shjpeg_context_t	*context,
 		  shjpeg_pixelformat	 format,
-		  unsigned long          phys,
-		  int		         width,
-		  int           	 height,
-		  int                    pitch);
+		  void			*virt,
+		  int			 width,
+		  int			 height,
+		  int			 pitch);
 
 #ifdef __cplusplus
 }

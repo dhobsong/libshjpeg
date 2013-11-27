@@ -8,14 +8,22 @@ LOCAL_SRC_FILES:= \
 	shjpeg_encode.c \
 	shjpeg_softhelper.c \
 	shjpeg_jpu.c  \
-	shjpeg_veu.c
+	shjpeg_vio.c
 
 
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/../include \
-			external/jpeg
+			external/jpeg \
+			external/libuiomux/include
 
 LOCAL_SHARED_LIBRARIES := libcutils \
-			  libjpeg
+			libjpeg \
+			libuiomux
+
+ifeq ($(JPU_DECODE_USE_VIO), true)
+	LOCAL_CFLAGS += -DHAVE_SHVIO=1 -DSHVIO_UIO_NAME=\"VIO\"
+	LOCAL_C_INCLUDES += hardware/renesas/shmobile/libshvio/include
+	LOCAL_SHARED_LIBRARIES += libshvio
+endif
 
 LOCAL_MODULE:= libshjpeg
 LOCAL_PRELINK_MODULE:= false

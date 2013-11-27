@@ -154,7 +154,6 @@ int main(int argc, char *argv[])
     int pitch;
     int offset;
     static int fd;
-    unsigned long jpeg_phys;
     void *jpeg_virt;
 
     int n;
@@ -306,14 +305,13 @@ int main(int argc, char *argv[])
 	DFBCHK(dfb->CreateSurface(dfb, &dsc, &image));
 	DFBCHK(image->Lock(image, DSLF_WRITE, &jpeg_virt, &pitch));
 	DFBCHK(image->GetFramebufferOffset(image, &offset));
-	jpeg_phys = dfb_gfxcard_memory_physical(NULL, offset);
 
 	/* decode */
 	fprintf(stderr,
-		"start decoding: phys=%08lx(%x), pitch=%d, %dx%d\n",
-		jpeg_phys, offset, pitch, context->width, context->height);
+		"start decoding: virt=%p(%x), pitch=%d, %dx%d\n",
+		jpeg_virt, offset, pitch, context->width, context->height);
 	format = (context->mode420) ? SHJPEG_PF_NV12 : SHJPEG_PF_NV16;
-	if (shjpeg_decode_run(context, format, jpeg_phys,
+	if (shjpeg_decode_run(context, format, jpeg_virt,
 			      context->width, context->height,
 			      pitch) < 0) {
 	    fprintf(stderr, "shjpeg_decode_run() failed\n");

@@ -31,10 +31,13 @@
  a 'read restart' command. The 'reload complete' interrupt can occur during or
  after line buffer processing.
 
- The VEU can scale & color convert pixel data and this is setup to work on
+ The VIO can scale & color convert pixel data and this is setup to work on
  line buffers as they are needed or output from the JPU.
 */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -51,7 +54,9 @@
 #include "shjpeg_internal.h"
 #include "shjpeg_regs.h"
 #include "shjpeg_jpu.h"
-#include "shjpeg_veu.h"
+#if defined(HAVE_SHVIO)
+#include "shjpeg_vio.h"
+#endif
 #include "shjpeg_softhelper.h"
 
 /*
@@ -169,10 +174,10 @@ wait_and_process_jpu(shjpeg_context_t * context,
 	shjpeg_jpu_setreg32(data, JPU_JINTS, ~ints & JPU_JINTS_MASK);
 
 	D_INFO("libshjpeg: JPU interrupt 0x%08x(%08x) "
-		"(veu_linebuf: %d, jpeg_linebuf: %d, "
+		"(vio_linebuf: %d, jpeg_linebuf: %d, "
 		"jpeg_buffers: %d)",
 		ints, shjpeg_jpu_getreg32(data, JPU_JINTS),
-		data->veu_linebuf, data->jpeg_linebuf,
+		data->vio_linebuf, data->jpeg_linebuf,
 		data->jpeg_buffers);
 
 	if (ints) {
@@ -188,41 +193,60 @@ wait_and_process_jpu(shjpeg_context_t * context,
 	return 0;
 }
 
+#if defined(HAVE_SHVIO)
 static void
-start_veu(shjpeg_context_t * context,
+start_vio(shjpeg_context_t * context,
 	shjpeg_internal_t * data, shjpeg_jpu_t * jpeg)
 {
-	D_INFO("libshjpeg: veu: start LB%d", data->veu_linebuf);
+	D_INFO("libshjpeg: vio: start LB%d", data->vio_linebuf);
 
 	if (data->jpeg_encode) {
-		shjpeg_veu_set_src(data, jpeg->sa_y, jpeg->sa_c);
-		shjpeg_veu_set_dst_jpu(data);
-		shjpeg_veu_start(data, 0);
+		shjpeg_vio_t vio;
+		memset((void*)&vio, 0, sizeof(shjpeg_vio_t));
+		vio.src.w = vio.dst.w = context->width;
+		vio.src.h = vio.dst.h = SHJPEG_JPU_LINEBUFFER_HEIGHT;
+		vio.src.format = shjpeg_vio_color(context->format);
+		if (vio.src.format == REN_UNKNOWN) {
+			D_BUG("unexpected format %08x", context->format);
+			return;
+		}
+		vio.dst.format = REN_NV16;
+		vio.src.pitch = context->pitch / size_y(vio.src.format, 1, 0);
+		vio.dst.pitch = SHJPEG_JPU_LINEBUFFER_PITCH;
+		vio.src.py = vio.dst.py = data->jpeg_lb1_virt;
+		vio.src.pc = vio.dst.pc = data->jpeg_lb1_virt +
+			SHJPEG_JPU_LINEBUFFER_SIZE_Y;
+		vio.src.pa = vio.dst.pa = NULL;
+		shjpeg_vio_init(data, &vio);
+		shjpeg_vio_set_src(data, jpeg->sa_y, jpeg->sa_c);
+		shjpeg_vio_set_dst_jpu(data);
+		shjpeg_vio_start(data, 0);
 
 		/* Update the source addresses for the next call */
 		jpeg->sa_y += jpeg->sa_inc;
 		jpeg->sa_c += jpeg->sa_inc;
 	} else {
-		/* Set the VEU src addrs using value of data->veu_linebuf */
-		shjpeg_veu_set_src_jpu(data);
-		shjpeg_veu_start(data, 1);
+		/* Set the VIO src addrs using value of data->vio_linebuf */
+		shjpeg_vio_set_src_jpu(data);
+		shjpeg_vio_start(data, 1);
 	}
 }
 
 static int
-wait_and_process_veu(shjpeg_context_t * context,
+wait_and_process_vio(shjpeg_context_t * context,
 		shjpeg_internal_t * data)
 {
-	shveu_wait(data->veu);
+	shvio_wait(data->vio);
 
-	D_INFO("libshjpeg: veu: finished LB%d", data->veu_linebuf);
+	D_INFO("libshjpeg: vio: finished LB%d", data->vio_linebuf);
 
 	/* point to the other buffer */
-	data->veu_linebuf = (data->veu_linebuf + 1) % 2;
-	data->veu_line_bufs_done++;
+	data->vio_linebuf = (data->vio_linebuf + 1) % 2;
+	data->vio_line_bufs_done++;
 
 	return 0;
 }
+#endif /* defined(HAVE_SHVIO) */
 
 /* Colorspace conversion in software */
 static void
@@ -240,7 +264,7 @@ shjpeg_sw_convert(shjpeg_context_t * context,
 	if (lines <= 0)
 		return;
 
-	D_INFO("libshjpeg: soft: process LB%d", data->veu_linebuf);
+	D_INFO("libshjpeg: soft: process LB%d", data->vio_linebuf);
 	if (data->jpeg_encode) {
 		soft_fromYCbCr(data, context, ydata, cdata,
 			data->user_jpeg_virt + jpeg->soft_offset, lines);
@@ -250,8 +274,8 @@ shjpeg_sw_convert(shjpeg_context_t * context,
 	}
 	jpeg->soft_offset += context->pitch * lines;
 	jpeg->soft_line += lines;
-	data->veu_linebuf = (data->veu_linebuf + 1) % 2;
-	data->veu_line_bufs_done++;
+	data->vio_linebuf = (data->vio_linebuf + 1) % 2;
+	data->vio_line_bufs_done++;
 }
 
 /* Do colour space converion on a line buffer */
@@ -260,16 +284,19 @@ shjpeg_convert(shjpeg_context_t * context,
 		shjpeg_internal_t * data, shjpeg_jpu_t * jpeg)
 {
 	int ret = 0;
-	int hw_convert = (jpeg->flags & SHJPEG_JPU_FLAG_CONVERT);
 	int sw_convert = (jpeg->flags & SHJPEG_JPU_FLAG_SOFTCONVERT);
+#if defined(HAVE_SHVIO)
+	int hw_convert = (jpeg->flags & SHJPEG_JPU_FLAG_CONVERT);
 
 	if (hw_convert) {
-		start_veu(context, data, jpeg);
-		ret = wait_and_process_veu(context, data);
-	} else if (sw_convert) {
+		start_vio(context, data, jpeg);
+		ret = wait_and_process_vio(context, data);
+	} else
+#endif /* defined(HAVE_SHVIO) */
+	if (sw_convert) {
 		shjpeg_sw_convert(context, data, jpeg);
 	} else {
-		data->veu_line_bufs_done++;
+		data->vio_line_bufs_done++;
 	}
 
 	return ret;
@@ -285,12 +312,12 @@ jpu_encode(shjpeg_context_t * context,
 	shjpeg_jpu_setreg32(data, JPU_JCCMD, JPU_JCCMD_WRITE_RESTART);
 
 	while (!done) {
-		if ((data->jpu_line_bufs_done < data->veu_line_bufs_done) &&
+		if ((data->jpu_line_bufs_done < data->vio_line_bufs_done) &&
 		    (data->jpu_line_bufs_pending == 0)) {
 			start_jpu_line(context, data);
 		}
 
-		if (data->jpu_line_bufs_done == data->veu_line_bufs_done) {
+		if (data->jpu_line_bufs_done == data->vio_line_bufs_done) {
 			shjpeg_convert(context, data, jpeg);
 		}
 
@@ -320,7 +347,7 @@ jpu_decode(shjpeg_context_t * context,
 			start_jpu_line(context, data);
 		}
 
-		if (data->jpu_line_bufs_done > data->veu_line_bufs_done) {
+		if (data->jpu_line_bufs_done > data->vio_line_bufs_done) {
 			shjpeg_convert(context, data, jpeg);
 		}
 
@@ -332,7 +359,7 @@ jpu_decode(shjpeg_context_t * context,
 	}
 
 	if (!data->jpeg_error &&
-	    data->jpu_line_bufs_done > data->veu_line_bufs_done) {
+	    data->jpu_line_bufs_done > data->vio_line_bufs_done) {
 		shjpeg_convert(context, data, jpeg);
 	}
 
@@ -365,8 +392,8 @@ shjpeg_jpu_run(shjpeg_context_t * context,
 		data->jpu_line_bufs_pending = (encode) ? 0 : 2;
 		data->jpu_line_bufs_done = 0;
 
-		data->veu_linebuf = 0;
-		data->veu_line_bufs_done = 0;
+		data->vio_linebuf = 0;
+		data->vio_line_bufs_done = 0;
 
 		jpeg->state = SHJPEG_JPU_RUN;
 		jpeg->error = 0;

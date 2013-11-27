@@ -16,26 +16,29 @@
  * MIT license: COPYING_MIT
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <stdio.h>
 #include <unistd.h>
 
-#include <shveu/shveu.h>
+#include <shvio/shvio.h>
 #include <shjpeg/shjpeg.h>
 #include "shjpeg_internal.h"
 #include "shjpeg_jpu.h"
-#include "shjpeg_veu.h"
+#include "shjpeg_vio.h"
 
 /*
- * Initialize VEU
+ * Initialize VIO
  */
 
-int shjpeg_veu_init(shjpeg_internal_t * data, shjpeg_veu_t * veu)
+int shjpeg_vio_init(shjpeg_internal_t * data, shjpeg_vio_t * vio)
 {
 	/* Set color conversion to BT601, full range data */
-	shveu_set_color_conversion(data->veu, 0, 1);
+	shvio_set_color_conversion(data->vio, 0, 1);
 
-	if (shveu_setup(data->veu, &veu->src, &veu->dst, SHVEU_NO_ROT) != 0) {
-		fprintf(stderr, "libshjpeg: %s: ERROR in shveu_setup!\n", __func__);
+	if (shvio_setup(data->vio, &vio->src, &vio->dst, SHVIO_NO_ROT) != 0) {
+		fprintf(stderr, "libshjpeg: %s: ERROR in shvio_setup!\n", __func__);
 		return 1;
 	}
 
@@ -43,15 +46,15 @@ int shjpeg_veu_init(shjpeg_internal_t * data, shjpeg_veu_t * veu)
 }
 
 /*
- * Set JPU as the destination of VEU
+ * Set JPU as the destination of VIO
  */
 
-void shjpeg_veu_set_dst_jpu(shjpeg_internal_t * data)
+void shjpeg_vio_set_dst_jpu(shjpeg_internal_t * data)
 {
 	u32 py;
 	u32 pc;
 
-	if (data->veu_linebuf) {
+	if (data->vio_linebuf) {
 		py = shjpeg_jpu_getreg32(data, JPU_JIFESYA2);
 		pc = shjpeg_jpu_getreg32(data, JPU_JIFESCA2);
 	} else {
@@ -59,19 +62,19 @@ void shjpeg_veu_set_dst_jpu(shjpeg_internal_t * data)
 		pc = shjpeg_jpu_getreg32(data, JPU_JIFESCA1);
 	}
 
-	shveu_set_dst_phys(data->veu, py, pc);
+	shvio_set_dst_phys(data->vio, py, pc);
 }
 
 /*
- * Set JPU as the source of VEU
+ * Set JPU as the source of VIO
  */
 
-void shjpeg_veu_set_src_jpu(shjpeg_internal_t * data)
+void shjpeg_vio_set_src_jpu(shjpeg_internal_t * data)
 {
 	u32 py;
 	u32 pc;
 
-	if (data->veu_linebuf) {
+	if (data->vio_linebuf) {
 		py = shjpeg_jpu_getreg32(data, JPU_JIFDDYA2);
 		pc = shjpeg_jpu_getreg32(data, JPU_JIFDDCA2);
 	} else {
@@ -79,27 +82,27 @@ void shjpeg_veu_set_src_jpu(shjpeg_internal_t * data)
 		pc = shjpeg_jpu_getreg32(data, JPU_JIFDDCA1);
 	}
 
-	shveu_set_src_phys(data->veu, py, pc);
+	shvio_set_src_phys(data->vio, py, pc);
 }
 
 /*
- * Set VEU Source to the given address
+ * Set VIO Source to the given address
  */
 
-void shjpeg_veu_set_src(shjpeg_internal_t * data, u32 src_y, u32 src_c)
+void shjpeg_vio_set_src(shjpeg_internal_t * data, u32 src_y, u32 src_c)
 {
-	shveu_set_src_phys(data->veu, src_y, src_c);
+	shvio_set_src_phys(data->vio, src_y, src_c);
 }
 
 /*
- * Start VEU
+ * Start VIO
  */
 
-void shjpeg_veu_start(shjpeg_internal_t * data, int bundle_mode)
+void shjpeg_vio_start(shjpeg_internal_t * data, int bundle_mode)
 {
 	if (bundle_mode) {
-		shveu_start_bundle(data->veu, SHJPEG_JPU_LINEBUFFER_HEIGHT);
+		shvio_start_bundle(data->vio, SHJPEG_JPU_LINEBUFFER_HEIGHT);
 	} else {
-		shveu_start(data->veu);
+		shvio_start(data->vio);
 	}
 }

@@ -16,6 +16,9 @@
  * MIT license: COPYING_MIT
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -33,7 +36,9 @@
 #include <shjpeg/shjpeg.h>
 #include "shjpeg_internal.h"
 #include "shjpeg_jpu.h"
-#include "shjpeg_veu.h"
+#if defined(HAVE_SHVIO)
+#include "shjpeg_vio.h"
+#endif
 #include "shjpeg_softhelper.h"
 
 /*
@@ -50,50 +55,34 @@ decode_hw(shjpeg_internal_t * data,
 	unsigned int len;
 	bool reload = false;
 	shjpeg_jpu_t jpeg;
-	shjpeg_veu_t veu;
+#if defined(HAVE_SHVIO)
+	shjpeg_vio_t vio;
+#endif
 	vmap_data_t mdata;
 	D_ASSERT(data != NULL);
 
-	memset((void*)&veu, 0, sizeof(shjpeg_veu_t));
 	memset(&mdata, 0, sizeof(mdata));
+#if defined(HAVE_SHVIO)
+	memset((void*)&vio, 0, sizeof(shjpeg_vio_t));
 
 	D_DEBUG_AT(SH7722_JPEG, "%s( %p, 0x%08lx|%d [%dx%d] %08x )",
 		   __FUNCTION__, data, phys, pitch,
 		   context->width, context->height, format);
 
-	switch (format) {
-	case SHJPEG_PF_NV12:
-		veu.dst.format = REN_NV12;
-		veu.dst.pitch = pitch;
-		break;
-
-	case SHJPEG_PF_NV16:
-		veu.dst.format = REN_NV16;
-		veu.dst.pitch = pitch;
-		break;
-
-	case SHJPEG_PF_RGB16:
-		veu.dst.format = REN_RGB565;
-		veu.dst.pitch = pitch / 2;
-		break;
-
-	case SHJPEG_PF_RGB32:
-		veu.dst.format = REN_RGB32;
-		veu.dst.pitch = pitch / 4;
-		break;
-
-	case SHJPEG_PF_RGB24:
-		veu.dst.format = REN_RGB24;
-		veu.dst.pitch = pitch / 3;
-		break;
-
-	case SHJPEG_PF_YCbCr:
-		break;
-
-	default:
+	vio.dst.format = shjpeg_vio_color(format);
+	if ((vio.dst.format == REN_UNKNOWN) &&
+	    (format != SHJPEG_PF_YCbCr)) {
 		D_BUG("unexpected format %08x", format);
 		return -1;
 	}
+	vio.dst.pitch = pitch / size_y(vio.dst.format, 1, 0);
+#else
+	if ((context->mode420 && format != SHJPEG_PF_NV12) ||
+	    (!context->mode420 && format != SHJPEG_PF_NV16)) {
+		D_PERROR("libshjpeg: unexpected format %08x", format);
+		return -1;
+	}
+#endif /* defined(HAVE_SHVIO) */
 
 	D_DEBUG_AT(SH7722_JPEG, "		 -> locking JPU...");
 
@@ -150,7 +139,8 @@ decode_hw(shjpeg_internal_t * data,
 	shjpeg_jpu_setreg32(data, JPU_JIFDSA1, data->jpeg_phys);
 	shjpeg_jpu_setreg32(data, JPU_JIFDSA2,
 			    data->jpeg_phys + SHJPEG_JPU_RELOAD_SIZE);
-	shjpeg_jpu_setreg32(data, JPU_JIFDDRSZ, len & 0x00FFFF00);
+	shjpeg_jpu_setreg32(data, JPU_JIFDDRSZ,
+			    ((u32)len + 255) & 0x00ffff00);
 
 	if ((context->mode420 && format == SHJPEG_PF_NV12) ||
 	    (!context->mode420 && format == SHJPEG_PF_NV16)) {
@@ -166,7 +156,8 @@ decode_hw(shjpeg_internal_t * data,
 		shjpeg_jpu_setreg32(data, JPU_JIFDDYA1, phys);
 		shjpeg_jpu_setreg32(data, JPU_JIFDDCA1,
 				    phys + pitch * height);
-		shjpeg_jpu_setreg32(data, JPU_JIFDDMW, pitch);
+		shjpeg_jpu_setreg32(data, JPU_JIFDDMW,
+				    ((u32)pitch + 7) & ~0x07);
 	} else {
 		/* Setup JPU for decoding in line buffer mode. */
 		shjpeg_jpu_setreg32(data, JPU_JINTE,
@@ -194,7 +185,6 @@ decode_hw(shjpeg_internal_t * data,
 		shjpeg_jpu_setreg32(data, JPU_JIFDDMW,
 				    SHJPEG_JPU_LINEBUFFER_PITCH);
 
-	/* Setup VEU for conversion/scaling (from line buffer to surface). */
 		if (format == SHJPEG_PF_YCbCr) {
 			jpeg.flags |= SHJPEG_JPU_FLAG_SOFTCONVERT;
 			jpeg.soft_offset = jpeg.soft_line = 0;
@@ -204,35 +194,39 @@ decode_hw(shjpeg_internal_t * data,
 				D_ERROR("Get vframe buff err\n");
 				goto end;
 			}
-		} else {
+		}
+#if defined(HAVE_SHVIO)
+		/* Setup VIO for conversion/scaling (from line buffer to surface). */
+		else {
 			jpeg.flags |= SHJPEG_JPU_FLAG_CONVERT;
-			/* Setup VEU for conversion/scaling
+			/* Setup VIO for conversion/scaling
 				(from line buffer to surface). */
 			/* source */
 			if (context->mode420)
-				veu.src.format = REN_NV12;
+				vio.src.format = REN_NV12;
 			else
-				veu.src.format = REN_NV16;
-			veu.src.w = context->width;
-			veu.src.h = context->height;
-			veu.src.pitch = SHJPEG_JPU_LINEBUFFER_PITCH;
+				vio.src.format = REN_NV16;
+			vio.src.w = context->width;
+			vio.src.h = context->height;
+			vio.src.pitch = SHJPEG_JPU_LINEBUFFER_PITCH;
 
 			/* destination */
-			veu.dst.w = width;
-			veu.dst.h = height;
+			vio.dst.w = width;
+			vio.dst.h = height;
 
 			/* Use valid virtual addresses to get through init */
-			veu.src.py = veu.dst.py = data->jpeg_lb1_virt;
-			veu.src.pc = veu.dst.pc = data->jpeg_lb1_virt;
-			veu.src.pa = veu.dst.pa = NULL;
+			vio.src.py = vio.dst.py = data->jpeg_lb1_virt;
+			vio.src.pc = vio.dst.pc = data->jpeg_lb1_virt;
+			vio.src.pa = vio.dst.pa = NULL;
 
-			/* set VEU */
-			shjpeg_veu_init(data, &veu);
+			/* set VIO */
+			shjpeg_vio_init(data, &vio);
 
 			/* Set the correct physical addresses */
-			shveu_set_src_phys(data->veu, 0, 0);
-			shveu_set_dst_phys(data->veu, phys, phys + pitch * height);
+			shvio_set_src_phys(data->vio, 0, 0);
+			shvio_set_dst_phys(data->vio, phys, phys + pitch * height);
 		}
+#endif /* defined(HAVE_SHVIO) */
 	}
 
 
@@ -293,7 +287,9 @@ decode_hw(shjpeg_internal_t * data,
 
 	free_frame_buffer_virtual(&mdata);
 
+#if defined(HAVE_SHVIO)
 end:
+#endif
 	/* Unlocking JPU using uiomux_unlock */
 	if (uiomux_unlock(data->uiomux, UIOMUX_JPU)) {
 		D_PERROR("libshjpeg: Could not unlock JPEG engine!");
@@ -677,11 +673,11 @@ int shjpeg_decode_init(shjpeg_context_t * context)
 int
 shjpeg_decode_run(shjpeg_context_t * context,
 		  shjpeg_pixelformat format,
-		  unsigned long phys, int width, int height, int pitch)
+		  void *virt, int width, int height, int pitch)
 {
 	shjpeg_internal_t *data;
+	unsigned long phys;
 	struct my_error_mgr jerr;
-	void *addr;
 	int ret = -1;
 
 	data = (shjpeg_internal_t *) context->internal_data;
@@ -695,32 +691,25 @@ shjpeg_decode_run(shjpeg_context_t * context,
 	/* check if we got a large enough surface */
 	if ((context->width > width) ||
 	    (context->height > height) ||
-	    ((context->width * (SHJPEG_PF_PITCH_MULTIPLY(format))) > pitch)
-	    || (pitch & 0x7)) {
+	    ((context->width * (SHJPEG_PF_PITCH_MULTIPLY(format))) > pitch)) {
 		D_ERROR("libshjpeg: width, height or pitch doesn't fit.");
 		return -1;
 	}
 
-	/* if physical address is not given, use the default */
-	if (phys == SHJPEG_USE_DEFAULT_BUFFER) {
-		/* first of all, check if the decoded image would fit */
-		int req_size =
-		    pitch * SHJPEG_PF_PLANE_MULTIPLY(format, height);
-		int max_size = data->jpeg_size - SHJPEG_JPU_SIZE;
-
-		if (req_size > max_size) {
-			D_ERROR("libshjpeg: "
-				"no memory to hold an image of %dx%d "
-				"(%dbpp) = %d(%d)B.",
-				context->width, context->height,
-				SHJPEG_PF_BPP(format), req_size, max_size);
-			errno = -ENOMEM;
-			return -1;
-		}
-
-		phys = data->jpeg_data;
+	/* error if virtual address is not given */
+	if (!virt) {
+		D_ERROR("libshjpeg: buffer address is not given.");
+		return -1;
 	}
-	data->user_jpeg_data = phys;
+
+	data->user_jpeg_data = phys =
+		uiomux_all_virt_to_phys(virt);
+
+	/* error if the specified address cannot be converted */
+	if (!phys) {
+		D_ERROR("libshjpeg: buffer address is invalid.");
+		return -1;
+	}
 
 	context->jpeg_decomp.err = jpeg_std_error(&jerr.pub);
 	jerr.pub.error_exit = jpeglib_panic;
@@ -757,38 +746,12 @@ shjpeg_decode_run(shjpeg_context_t * context,
 	}
 
 	if ((context->libjpeg_disabled <= 0) && (ret)) {
-		int fd;
-		int len =
-		    _PAGE_ALIGN(SHJPEG_PF_PLANE_MULTIPLY(format, height)
-				* pitch) + _PAGE_SIZE;
-		void *offsetaddr;
-
-		fd = open("/dev/mem", O_RDWR | O_SYNC);
-		if (fd < 0) {
-			D_PERROR("libshjpeg: Could not open /dev/mem!");
-			return -1;
-		}
-
-		addr =
-		    mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
-			 phys & ~(_PAGE_SIZE - 1));
-		if (addr == MAP_FAILED) {
-			D_PERROR("libshjpeg: Could not map /dev/mem at"
-					"0x%08lx (length %d)!", phys, len);
-			close(fd);
-			return -1;
-		}
-
-		offsetaddr = addr + (phys & (_PAGE_SIZE - 1));
-		ret = decode_sw(context, format, offsetaddr, width,
+		ret = decode_sw(context, format, virt, width,
 				height, pitch);
 
 		// set the flag to notify the use of libjpeg
 		if (!ret)
 			context->libjpeg_used = 1;
-
-		munmap(addr, len);
-		close(fd);
 	}
 
 	return ret;

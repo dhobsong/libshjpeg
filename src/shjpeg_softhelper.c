@@ -15,6 +15,9 @@
  * GNU LGPL license: COPYING_LGPL
  * MIT license: COPYING_MIT
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,15 +73,6 @@ get_frame_buffer_virtual(shjpeg_internal_t * data,
 		(format, context->height) *
 		context->pitch) + _PAGE_SIZE;
 
-	if ( phys == data->jpeg_data ) { //Allows user access but no cache
-		offset = _PAGE_SIZE;
-		virt_offset = SHJPEG_JPU_SIZE;
-		mdata->mapbuflen += SHJPEG_JPU_SIZE;
-		data->user_jpeg_virt = uiomux_phys_to_virt(data->uiomux,
-			UIOMUX_JPU, data->jpeg_data);
-		return 0;
-	}
-
 	snprintf(path, MAXPATHLEN, "/dev/mem");
 	offset = phys & ~(_PAGE_SIZE - 1);
 	virt_offset = (phys & (_PAGE_SIZE - 1));
@@ -105,7 +99,7 @@ get_frame_buffer_virtual(shjpeg_internal_t * data,
 
 void soft_get_src_jpu(shjpeg_internal_t * data, void **ydata, void **cdata)
 {
-	if (!data->veu_linebuf) {
+	if (!data->vio_linebuf) {
 		*ydata = data->jpeg_lb1_virt;
 		*cdata =
 		    data->jpeg_lb1_virt + SHJPEG_JPU_LINEBUFFER_SIZE_Y;

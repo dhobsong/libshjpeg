@@ -16,6 +16,9 @@
  * MIT license: COPYING_MIT
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -48,7 +51,9 @@ static void uio_shutdown(shjpeg_internal_t * data)
 		SHJPEG_JPU_LINEBUFFER_SIZE);
 	uiomux_free(data->uiomux, UIOMUX_JPU, data->jpeg_lb2_virt,
 		SHJPEG_JPU_LINEBUFFER_SIZE);
-	shveu_close(data->veu);
+#if defined(HAVE_SHVIO)
+	shvio_close(data->vio);
+#endif
 	uiomux_close(data->uiomux);
 
 	/* deinit */
@@ -69,11 +74,14 @@ static int uio_init(shjpeg_context_t * context, shjpeg_internal_t * data)
 	D_DEBUG_AT(SH7722_JPEG, "( %p )", data);
 
 
-	/* Open VEU */
-	if ((data->veu = shveu_open()) == 0) {
-		D_ERROR("libshjpeg: Cannot open VEU!");
+#if defined(HAVE_SHVIO)
+	/* Open VIO */
+	data->vio = shvio_open_named(SHVIO_UIO_NAME);
+	if (!data->vio) {
+		D_ERROR("libshjpeg: Cannot open VIO!");
 		return -1;
 	}
+#endif
 
 	/* Open JPU */
 	data->uiomux = uiomux_open_named(uio_device_names);
@@ -120,14 +128,8 @@ static int uio_init(shjpeg_context_t * context, shjpeg_internal_t * data)
 			SHJPEG_JPU_LINEBUFFER_SIZE, 1);
 	data->jpeg_lb2 = uiomux_virt_to_phys(data->uiomux, UIOMUX_JPU,
 			data->jpeg_lb2_virt);
-	// jpeg data
-	/* We can do this because UIOMux mmaps the entire memory area on
-	   device open and the memory is contiguous */
-	data->jpeg_data = data->jpeg_lb2 + SHJPEG_JPU_LINEBUFFER_SIZE;	
 
-	D_INFO ("libshjpeg: jpu_phys=%08lx(%08lx), "
-		"jpeg_phys=%08lx(%08lx)",
-		data->jpu_phys, data->jpu_size,
+	D_INFO ("libshjpeg: jpu_phys=%08lx(%08lx)",
 		data->jpeg_phys, data->jpeg_size);
 
 	return 0;
@@ -138,6 +140,40 @@ static int uio_init(shjpeg_context_t * context, shjpeg_internal_t * data)
 	uiomux_unregister (data->jpeg_virt);
 
 	return -1;
+}
+
+/*
+ * allocate UIO memory for output buffer
+ */
+void *
+shjpeg_malloc(shjpeg_context_t * context,
+	      shjpeg_pixelformat format,
+	      int width, int height, int pitch,
+	      size_t *allocated_size)
+{
+	shjpeg_internal_t *data;
+	void *vaddr;
+	int req_size = pitch * SHJPEG_PF_PLANE_MULTIPLY(format, height);
+
+	data = context->internal_data;
+	vaddr = uiomux_malloc(data->uiomux, UIOMUX_JPU, req_size, 8);
+	if (*allocated_size)
+		*allocated_size = req_size;
+
+	return vaddr;
+}
+
+/*
+ * allocate UIO memory for output buffer
+ */
+void
+shjpeg_free(shjpeg_context_t * context,
+	    void *vaddr, size_t size)
+{
+	shjpeg_internal_t *data;
+
+	data = context->internal_data;
+	uiomux_free(data->uiomux, UIOMUX_JPU, vaddr, size);
 }
 
 /*
@@ -227,15 +263,12 @@ void shjpeg_shutdown(shjpeg_context_t * context)
 
 int
 shjpeg_get_frame_buffer(shjpeg_context_t * context,
-			unsigned long *phys, void **buffer, size_t * size)
+			void **buffer, size_t * size)
 {
 	if (!data.ref_count) {
 		D_ERROR("libshjpeg: not initialized yet.");
 		return -1;
 	}
-
-	if (phys)
-		*phys = data.jpeg_data;
 
 	if (buffer)
 		*buffer = (void *) data.jpeg_virt + SHJPEG_JPU_SIZE;

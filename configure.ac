@@ -38,7 +38,6 @@ AM_CONDITIONAL(CUSTOM_JPEG_LIB, test x$libjpeg_inc_path != x)
 
 PKG_CHECK_MODULES(DIRECTFB, directfb >= 1.4.0, HAVE_DIRECTFB=yes, HAVE_DIRECTFB=no)
 PKG_CHECK_MODULES(UIOMUX, uiomux >= 1.6.0)
-PKG_CHECK_MODULES(SHVEU, shveu >= 1.7.0)
 
 AM_CONDITIONAL(MAKE_DIRECTFB_TEST, test x$HAVE_DIRECTFB = xyes)
 
@@ -86,6 +85,25 @@ AC_TYPE_UINT8_T
 #AC_FUNC_MALLOC
 AC_FUNC_MMAP
 AC_CHECK_FUNCS([getpagesize memset munmap strerror])
+
+# Checks for a color space conversion library
+ac_enable_vio=yes
+AC_ARG_ENABLE(vio,
+	[  --disable-vio           disable color space conversion by VIO ],
+	[ ac_enable_vio=no ], [ ac_enable_vio=yes] )
+if test "x${ac_enable_vio}" = xyes ; then
+	PKG_CHECK_MODULES(SHVIO, shvio >= 1.7.0, HAVE_SHVIO=yes, HAVE_SHVIO=no)
+	if test "x$HAVE_SHVIO" = "xyes" ; then
+		AC_DEFINE(HAVE_SHVIO, [1], [Define to 1 if you have SHVIO])
+		AC_ARG_WITH([vio-name],
+			[AS_HELP_STRING([--with-vio-name=<name>],
+					[name to identify an appropriate uio device for libshvio [default=VEU]])],
+			[SHVIO_NAME=$withval], [SHVIO_NAME="VEU"])
+		AC_DEFINE_UNQUOTED(SHVIO_UIO_NAME, "$SHVIO_NAME",
+			[Specify name to identify an appropriate UIO device for libshvio])
+	fi
+fi
+AM_CONDITIONAL(HAVE_SHVIO, [test "x$HAVE_SHVIO" = "xyes"])
 
 AC_CONFIG_FILES([Makefile
                  src/Makefile

@@ -249,7 +249,7 @@ boolean shjpeg_start_decompress(j_decompress_ptr cinfo)
 	format = get_shjpeg_pixelformat(cinfo->out_color_space);
 
 	if (shjpeg_decode_run(context, format,
-			      ctx->hardware_buf.phys_addr, context->width,
+			      ctx->hardware_buf.virt_addr, context->width,
 			      context->height, context->pitch) < 0) {
 		//this is not a recoverable failure... abort
 		shjpeg_decode_shutdown(context);
@@ -445,7 +445,7 @@ void shjpeg_finish_compress(j_compress_ptr cinfo)
 	context = ctx->context;
 	format = get_shjpeg_pixelformat(cinfo->in_color_space);
 	if (shjpeg_encode(context, format,
-			  ctx->hardware_buf.phys_addr, context->width,
+			  ctx->hardware_buf.virt_addr, context->width,
 			  context->height, context->pitch) < 0) {
 		ERREXIT(cinfo, SHJMSG_COMPRESS_ERR);
 	}

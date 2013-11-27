@@ -162,12 +162,11 @@ int main(int argc, char *argv[])
     int i, bufsiz;
     int vd;
     char *videodev = "/dev/video0";
-    unsigned long jpeg_phys;
     void *jpeg_virt;
     size_t jpeg_size;
     struct v4l2_requestbuffers reqbuf;
     struct {
-	unsigned long		 start;
+	void			*start;
 	size_t	 		 length;
 	struct v4l2_buffer	 buffer;
     } *buffers;
@@ -275,11 +274,11 @@ int main(int argc, char *argv[])
     if (!(ctx = shjpeg_init(verbose)))
 	return 1;
 
-    if (shjpeg_get_frame_buffer(ctx, &jpeg_phys, &jpeg_virt, &jpeg_size ))
+    if (shjpeg_get_frame_buffer(ctx, &jpeg_virt, &jpeg_size ))
 	return 1;
 
     if (!quiet)
-	fprintf(stderr, "jpeg mem buffer at 0x%08lx/%p, size = 0x%08x\n", jpeg_phys, jpeg_virt, jpeg_size);
+	fprintf(stderr, "jpeg mem buffer at %p, size = 0x%08x\n", jpeg_virt, jpeg_size);
 
     if ((vd = open(videodev, O_RDWR)) < 0) {
 	fprintf(stderr, "Can't open '%s'\n", videodev);
@@ -357,21 +356,21 @@ int main(int argc, char *argv[])
 	/* queue buffer */
 	if (ioctl(vd, VIDIOC_QBUF, &buffer) < 0) {
 	    perror("ioctl - VIDIOC_QBUF");
-	    fprintf(stderr, "buffer: length=%d, ptr=%08lx/%08lx\n",
-	    	    buffer.length, buffer.m.userptr, jpeg_phys + i * bufsiz);
+	    fprintf(stderr, "buffer: length=%d, ptr=%08lx\n",
+		    buffer.length, buffer.m.userptr);
 	    return 1;
 	}
 
 	/* copy buffer information */
 	buffers[i].length = buffer.length;
-	buffers[i].start  = jpeg_phys + i * bufsiz;
+	buffers[i].start  = jpeg_virt + i * bufsiz;
 
 	memcpy((void*)&buffers[i].buffer, (void*)&buffer, sizeof(buffer));
 
 	/* debug */
 	if (!quiet)
 	    fprintf(stderr,
-		    "buffer %d: addr=%08lx/%08lx, size=%08x\n", 
+		    "buffer %d: addr=%08lx/%p, size=%08x\n",
 		    i, buffer.m.userptr, buffers[i].start, buffer.length);
     }
 
